@@ -278,7 +278,8 @@ function set(patch: Partial<AppState> | ((s: AppState) => Partial<AppState>)) {
   state = { ...state, ...next };
   // Opening another chat shows that chat's model choice and whether that chat is mid-turn.
   if (state.activeSession !== before) {
-    const chosen = state.sessions.find(s => s.id === state.activeSession)?.preferences?.remoteModel ?? null;
+    const declared = state.sessions.find(s => s.id === state.activeSession)?.preferences?.remoteModel;
+    const chosen = declared ?? defaultRemoteModel();
     state = { ...state, remoteModel: 'remoteModel' in next ? state.remoteModel : chosen, streaming: !!state.activeSession && liveTurns.has(state.activeSession) };
   }
   for (const l of listeners) l();
@@ -313,10 +314,24 @@ export function selectRemoteModel(remoteModel: RemoteModelSelection | null) {
   if (id) patchSession(id, s => ({ ...s, preferences: { ...s.preferences, remoteModel } }));
   try { localStorage.removeItem('strata.remote-model.v1'); } catch { /* The old global choice is retired. */ }
 }
+/**
+ * Nothing local is loaded and exactly one API model is saved: that model is the chat default. Without
+ * this a fresh install whose engine runs elsewhere (a container, another computer) is a dead end — the
+ * composer only says "No model is loaded" until someone opens the picker.
+ */
+function defaultRemoteModel(): RemoteModelSelection | null {
+  if (state.library?.loaded) return null;
+  const saved = state.providers?.connections.flatMap(c => c.models.map(m => ({ connectionId: c.id, modelId: m.id }))) ?? [];
+  return saved.length === 1 ? saved[0] : null;
+}
+
 function applyProviders(providers: ModelProviders) {
   // A chat whose API model was removed keeps its choice: the next send says the model is gone, rather
   // than quietly answering from the local model.
   set({ providers });
+  if (state.remoteModel || state.streaming) return;
+  const only = defaultRemoteModel();
+  if (only) selectRemoteModel(only);
 }
 export async function saveModelConnection(draft: ModelConnectionDraft) {
   applyProviders(await api.post<ModelProviders>('/api/model-providers', draft));

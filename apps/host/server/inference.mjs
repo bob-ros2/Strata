@@ -49,6 +49,16 @@ function strataUrl() {
 }
 
 /**
+ * The key for that worker, when it needs one. A worker the app starts itself carries its key in the
+ * store; a worker named with `STRATA_SERVER_URL` is reached over the network (a container, another
+ * computer) and its key comes from `STRATA_SERVER_KEY`. Unset means: the same keyless calls as before.
+ */
+function strataHeaders() {
+  const key = process.env.STRATA_SERVER_KEY?.trim();
+  return key ? { authorization: `Bearer ${key}` } : undefined;
+}
+
+/**
  * Probe a loopback endpoint and confirm it really is a Strata worker.
  *
  * A bare OpenAI-compatible listener is not enough: Strata's worker answers `/v1/status` with its
@@ -58,12 +68,13 @@ function strataUrl() {
  */
 async function probeStrata(baseUrl) {
   try {
-    const res = await fetch(`${baseUrl.replace(/\/v1$/, '')}/v1/status`, { signal: AbortSignal.timeout(900) });
+    const headers = strataHeaders();
+    const res = await fetch(`${baseUrl.replace(/\/v1$/, '')}/v1/status`, { signal: AbortSignal.timeout(900), headers });
     if (!res.ok) return null;
     const status = await res.json().catch(() => null);
     if (!status || typeof status !== 'object') return null;
     if (status.service !== 'strata') return null;
-    const models = await fetch(`${baseUrl}/models`, { signal: AbortSignal.timeout(900) })
+    const models = await fetch(`${baseUrl}/models`, { signal: AbortSignal.timeout(900), headers })
       .then((r) => (r.ok ? r.json() : null))
       .catch(() => null);
     return {
@@ -249,7 +260,7 @@ export async function proxyCompletion({ baseUrl, message, history = [], systemPr
   const sampling = { temperature: defaults['sample.temp'] ?? 0.6, top_p: defaults['sample.topP'] ?? 0.95, top_k: defaults['sample.topK'] ?? 40, repeat_penalty: defaults['sample.repeat'] ?? 1.05, seed: defaults['sample.seed'] ?? -1, experimental_speed_projection: defaults['sample.speedProjection'] ?? true, ...(Number(defaults['sample.maxTokens']) > 0 ? {max_tokens: Number(defaults['sample.maxTokens'])} : {}) };
   const res = await fetch(`${baseUrl}/chat/completions`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', ...(authorization?{authorization:`Bearer ${authorization}`} :supervised && getStore().serving?.apiKey ? { authorization: `Bearer ${getStore().serving.apiKey}` } : {}) },
+    headers: { 'content-type': 'application/json', ...(authorization?{authorization:`Bearer ${authorization}`} :supervised && getStore().serving?.apiKey ? { authorization: `Bearer ${getStore().serving.apiKey}` } : strataHeaders() ? strataHeaders() : {}) },
     signal,
     body: JSON.stringify({
       model: modelId,
